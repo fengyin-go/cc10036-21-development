@@ -263,11 +263,87 @@ def lineage_upstream(node_id: str) -> dict[str, Any]:
 
 @app.get("/api/analytics/lineage/{node_id}/impact")
 def lineage_impact(node_id: str) -> dict[str, Any]:
-    """变更影响分析。"""
+    """变更影响分析（节点集合）。"""
     svc = service_for("data_lineage")
     if svc is None:
         return {"ok": False, "message": "血缘服务未就绪"}
     return svc.impact_analysis(node_id)
+
+
+@app.get("/api/analytics/lineage/{node_id}/locations")
+def lineage_locations(
+    node_id: str,
+    scope: str = "path",
+    keyword: str = "",
+    page: int = 1,
+    size: int = 20,
+    only_unrefreshed: bool = False,
+) -> dict[str, Any]:
+    """影响定位：从变更源按实际命中路径追查下游未刷新表，支持按路径/按表分页。"""
+    svc = service_for("data_lineage")
+    if svc is None:
+        return {"ok": False, "message": "血缘服务未就绪"}
+    return svc.impact_locations(
+        node_id, scope=scope, keyword=keyword, page=page, size=size,
+        only_unrefreshed=only_unrefreshed,
+    )
+
+
+@app.get("/api/analytics/lineage/{node_id}/blocking-plans")
+def lineage_blocking_plans(
+    node_id: str, page: int = 1, size: int = 20,
+) -> dict[str, Any]:
+    """从变更源汇总通向阻塞计划的定位信息。"""
+    svc = service_for("data_lineage")
+    if svc is None:
+        return {"ok": False, "message": "血缘服务未就绪"}
+    return svc.blocking_plans_for_source(node_id, page=page, size=size)
+
+
+@app.post("/api/analytics/lineage/{node_id}/partitions")
+def lineage_add_partition(node_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """向某个节点补入分区，并按实际关系重算判断数据。"""
+    svc = service_for("data_lineage")
+    if svc is None:
+        return {"ok": False, "message": "血缘服务未就绪"}
+    return svc.add_partition(
+        node_id,
+        str(payload.get("partition", "")),
+        ready_at=payload.get("ready_at"),
+    )
+
+
+@app.get("/api/analytics/scheduler/plans/{plan_id}/predecessors")
+def scheduler_plan_predecessors(plan_id: int) -> dict[str, Any]:
+    """计划的完整前驱：前驱计划与血缘上游闭包。"""
+    svc = service_for("query_scheduler")
+    if svc is None:
+        return {"ok": False, "message": "调度服务未就绪"}
+    return svc.plan_predecessors(plan_id)
+
+
+@app.get("/api/analytics/scheduler/plans/{plan_id}/locations")
+def scheduler_plan_locations(
+    plan_id: int,
+    page: int = 1,
+    size: int = 20,
+    source_id: str | None = None,
+) -> dict[str, Any]:
+    """调度读取影响定位数据，按两路检索并翻页。"""
+    svc = service_for("query_scheduler")
+    if svc is None:
+        return {"ok": False, "message": "调度服务未就绪"}
+    return svc.plan_impact_locations(
+        plan_id, page=page, size=size, source_id=source_id)
+
+
+@app.get("/api/analytics/scheduler/plans/{plan_id}/partitions")
+def scheduler_plan_partitions(plan_id: int) -> dict[str, Any]:
+    """利用计划完整前驱解释本次缺少哪些分区，并核对等待数据和实际就绪时间。"""
+    svc = service_for("query_scheduler")
+    if svc is None:
+        return {"ok": False, "message": "调度服务未就绪"}
+    return svc.plan_partition_diagnosis(plan_id)
 
 
 @app.get("/api/analytics/cache/stats")

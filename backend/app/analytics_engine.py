@@ -441,12 +441,89 @@ class LineageGraph:
         visited.discard(node_id)
         return sorted(visited)
 
+    def downstream_paths(self, node_id: str, max_depth: int = 12) -> dict[str, list[list[str]]]:
+        """列出从 node_id 到每个可达下游节点的实际命中路径。
+
+        与 impact_analysis 只返回节点集合不同，这里保留“怎么走到”的路径，
+        供影响定位按路径或按表聚合。返回 {下游节点ID: [路径ID列表, ...]}。
+        """
+        if node_id not in self.nodes:
+            return {}
+        found: dict[str, list[list[str]]] = {}
+        stack: list[tuple[str, list[str]]] = [(node_id, [node_id])]
+        while stack:
+            current, path = stack.pop()
+            node = self.nodes.get(current)
+            if node is None:
+                continue
+            for ds_id in node.downstream_ids:
+                if not ds_id or ds_id in path:
+                    continue
+                next_path = path + [ds_id]
+                found.setdefault(ds_id, []).append(next_path)
+                if len(next_path) < max_depth:
+                    stack.append((ds_id, next_path))
+        for paths in found.values():
+            # 去重并按节点ID排序，保证分页顺序稳定。
+            unique = {tuple(p): p for p in paths}
+            paths[:] = sorted(unique.values(), key=lambda p: [_node_sort_key(x) for x in p])
+        return found
+
+    def upstream_closure(self, node_id: str) -> list[str]:
+        """返回 node_id 的完整上游节点集合（不含自身），即计划完整前驱的数据侧。"""
+        visited: set[str] = set()
+        queue: deque[str] = deque([node_id])
+        while queue:
+            current = queue.popleft()
+            node = self.nodes.get(current)
+            if node is None:
+                continue
+            for up_id in node.upstream_ids:
+                if up_id not in visited:
+                    visited.add(up_id)
+                    queue.append(up_id)
+        visited.discard(node_id)
+        return sorted(visited, key=_node_sort_key)
+
+    def shortest_downstream_path(self, start_id: str, end_id: str) -> list[str] | None:
+        """返回从 start_id 到 end_id 的最短下游路径（含两端），用于把定位结果挂到计划。"""
+        if start_id == end_id:
+            return [start_id]
+        visited: set[str] = {start_id}
+        queue: deque[list[str]] = deque([[start_id]])
+        while queue:
+            path = queue.popleft()
+            node = self.nodes.get(path[-1])
+            if node is None:
+                continue
+            for ds_id in sorted(node.downstream_ids, key=_node_sort_key):
+                if ds_id in visited:
+                    continue
+                next_path = path + [ds_id]
+                if ds_id == end_id:
+                    return next_path
+                visited.add(ds_id)
+                queue.append(next_path)
+        return None
+
+    def node_sort_key(self, node_id: str) -> int:
+        return _node_sort_key(node_id)
+
+
     def to_adjacency(self) -> dict[str, Any]:
         """导出邻接表格式。"""
         adj: dict[str, list[str]] = {}
         for nid, node in self.nodes.items():
             adj[nid] = list(node.upstream_ids)
         return {"nodes": list(self.nodes), "adjacency": adj}
+
+
+def _node_sort_key(node_id: str) -> int:
+    """节点ID排序键：纯数字按数值，其余排在后面按字符串。"""
+    try:
+        return int(node_id)
+    except (ValueError, TypeError):
+        return 10**9
 
 
 # ---------------------------------------------------------------------------

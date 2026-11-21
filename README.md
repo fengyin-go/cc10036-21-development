@@ -77,5 +77,30 @@ npm run dev
 - 列表接口统一返回 `{ items, total, page, size }`，动作接口统一返回 `{ ok, message }`。
 - 状态流转只允许在 `app/services` 里改，路由层不做业务判断。
 
+## 影响定位（数据血缘 → 查询调度）
+
+血缘影响分析原来只返回下游节点集合，无法回答“这次为什么没刷新、计划在等哪一侧”。
+新增影响定位链路：
+
+- `GET /api/analytics/lineage/{node_id}/locations?scope=path|table&page=&size=&keyword=&only_unrefreshed=`
+  从变更源按实际命中的下游路径生成定位数据。`scope=path` 一行一条路径，`scope=table`
+  一行一张表（`matched_paths` 保留全部经由中间表）。`total` 按所选口径统计完整依赖集合，
+  `dependency_total_by_path / dependency_total_by_table` 同时给出两种口径；
+  `keyword` 与 `only_unrefreshed` 只筛展示条目，`dependency_node_ids` 不变。
+- `GET /api/analytics/lineage/{node_id}/blocking-plans` 汇总通向阻塞计划的定位信息。
+- `POST /api/analytics/lineage/{node_id}/partitions`（`{partition, ready_at}`）
+  向血缘节点补入分区，随后所有判断按当前关系重算。
+- `GET /api/analytics/scheduler/plans/{id}/predecessors` 返回计划完整前驱（前驱计划 +
+  血缘上游闭包）。
+- `GET /api/analytics/scheduler/plans/{id}/locations` 调度读取影响定位数据，按计划每一侧
+  依赖分别检索，`side_label` 标明命中路径走的是哪一侧上游，`waits_on_this_path` 标明
+  计划是否在等这一侧。
+- `GET /api/analytics/scheduler/plans/{id}/partitions` 用完整前驱解释本次缺少哪些分区，
+  并核对每个等待侧的实际就绪时间。
+
+同一张派生表从两个中间表都能到达时，按路径计会有两条独立记录；按表计会合并为一行并保留
+`matched_paths`。前端在“数据血缘”和“查询调度”工作台内嵌 `LineageImpactPanel.vue`
+和 `SchedulerImpactPanel.vue` 完成检索、翻页、补分区与核对。
+
 领域：数据工程
 子方向：数据分析与数据应用
